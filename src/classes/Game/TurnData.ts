@@ -54,7 +54,7 @@ export class TurnData {
   }
 }
 
-interface ICellTurnData {
+export interface ICellTurnData {
   scrapAmount: number;
   owner: number;
   units: number;

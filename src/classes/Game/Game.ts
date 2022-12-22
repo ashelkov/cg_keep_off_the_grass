@@ -26,11 +26,17 @@ export class Game {
       // 2. Update game state
       this.state.update(this.turnData);
 
-      // 3. Debugger
+      // 3. Update analytics
+      this.state.updateAnalytics();
+
+      // 4. Make analysis
+      this.engine.analyze();
+
+      // 5. Debug output
       this.engine.debugger();
 
-      // 4. Make a move
-      this.engine.makeMove();
+      // 6. Make a move
+      this.engine.printCommand();
     }
   }
 }

@@ -20,4 +20,8 @@ export class GameState {
     this.oppMatter = turnData.oppMatter;
     this.board.update(turnData);
   }
+
+  updateAnalytics() {
+    this.board.updateAnalytics();
+  }
 }
