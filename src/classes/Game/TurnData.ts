@@ -4,10 +4,13 @@ export class TurnData {
   board: ICellTurnData[][];
   width: number;
   height: number;
+  turn: number;
+  turnTimestamp: number;
 
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
+    this.turn = 0;
   }
 
   read() {
@@ -48,6 +51,8 @@ export class TurnData {
       board.push(cells);
     }
 
+    this.turn++;
+    this.turnTimestamp = Number(new Date());
     this.myMatter = myMatter;
     this.oppMatter = oppMatter;
     this.board = board;

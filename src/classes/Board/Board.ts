@@ -7,6 +7,9 @@ export class Board {
   cells: BoardCell[];
   cellsXY: BoardCell[][];
 
+  innerBorder: BoardCell[]; // mine cells adjacent with enemy or neutral cells
+  outerBorder: BoardCell[]; // not mine cells adjacent with mine
+
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
@@ -36,10 +39,27 @@ export class Board {
     }
   }
 
-  update({ board }: TurnData) {
+  update({ board, turn }: TurnData) {
     for (let y = 0; y < this.height; y++) {
       for (let x = 0; x < this.width; x++) {
         this.cellsXY[y][x].update(board[y][x]);
+      }
+    }
+
+    if (turn === 1) {
+      this.calcDistanceToSpawns();
+    }
+  }
+
+  calcDistanceToSpawns() {
+    const mySpawnPoint = this.cells.find((_) => _.isMine() && !_.units);
+    const oppSpawnPoint = this.cells.find((_) => _.isFoe() && !_.units);
+
+    for (let y = 0; y < this.height; y++) {
+      for (let x = 0; x < this.width; x++) {
+        const cell = this.cellsXY[y][x];
+        cell.distanceToMySpawn = cell.distanceTo(mySpawnPoint);
+        cell.distanceToOpponentSpawn = cell.distanceTo(oppSpawnPoint);
       }
     }
   }
@@ -50,5 +70,27 @@ export class Board {
         this.cellsXY[y][x].updateAnalytics();
       }
     }
+    this.innerBorder = this.getInnerBorder();
+    this.outerBorder = this.getOuterBorder();
+  }
+
+  /* Analytical methods */
+
+  getInnerBorder() {
+    return this.cells.filter(
+      (cell) =>
+        cell.isMine() &&
+        cell.canMoveHere &&
+        cell.adjacent.some((_) => !_.isMine() && _.canMoveHere)
+    );
+  }
+
+  getOuterBorder() {
+    return this.cells.filter(
+      (cell) =>
+        !cell.isMine() &&
+        cell.canMoveHere &&
+        cell.adjacent.some((_) => _.isMine() && _.canMoveHere)
+    );
   }
 }

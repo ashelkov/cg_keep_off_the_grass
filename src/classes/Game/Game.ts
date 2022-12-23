@@ -7,6 +7,8 @@ export class Game {
   turnData: TurnData;
   engine: Engine;
 
+  turnTimestamp: number;
+
   constructor() {
     // @ts-ignore
     const [width, height] = readline().split(' ').map(Number);

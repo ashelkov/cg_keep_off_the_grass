@@ -4,6 +4,7 @@ import { Board } from './Board';
 export class BoardCell {
   x: number;
   y: number;
+  key: string;
   board: Board;
 
   // received
@@ -19,18 +20,18 @@ export class BoardCell {
   adjacent: BoardCell[]; // 4 cells - up, down, left, right
   surround: BoardCell[]; // 8 surrounding cells
   distanceToCenter: number;
+  distanceToMySpawn: number;
+  distanceToOpponentSpawn: number;
   prev?: BoardCell;
 
   // analyzed
-  recycledByMe?: boolean;
-  recycledByOpponent?: boolean;
-  scrapToMine?: number;
+  inRangeOfMyRecycler?: boolean;
+  inRangeOfEnemyRecycler?: boolean;
+  scrapToRecycle?: number;
+  tilesToRecycle?: number;
   adjacentEnemies?: number;
-  moveable?: boolean;
+  canMoveHere?: boolean;
   targeted?: number;
-  inFrontline?: boolean; // mine, adjacent with opponent cells
-  inInnerline?: boolean; // mine, adjacent with opponent or neutral cells
-  inOuterline?: boolean; // not mine, adjacent with mine
 
   // todo
   unitsNextTurn?: number;
@@ -38,6 +39,7 @@ export class BoardCell {
   constructor(x: number, y: number) {
     this.x = x;
     this.y = y;
+    this.key = `${x}-${y}`;
     this.scrapAmount = 0;
     this.owner = 0;
     this.units = 0;
@@ -85,15 +87,13 @@ export class BoardCell {
   }
 
   updateAnalytics() {
-    this.recycledByMe = this.isRecycledByMe();
-    this.recycledByOpponent = this.isRecycledByOpponent();
-    this.scrapToMine = this.getScrapToMine();
+    this.inRangeOfMyRecycler = this.isMyRecyclerInRange();
+    this.inRangeOfEnemyRecycler = this.isEnemyRecyclerInRange();
+    this.scrapToRecycle = this.getScrapToRecycle();
+    this.tilesToRecycle = this.getTilesToRecycle();
     this.adjacentEnemies = this.getAdjacentEnemies();
-    this.moveable = this.isMoveable();
+    this.canMoveHere = this.isAbleMoveHere();
     this.targeted = 0;
-    this.inFrontline = this.isFrontline();
-    this.inInnerline = this.isInnerline();
-    this.inOuterline = this.isOuterline();
   }
 
   clone() {
@@ -106,7 +106,9 @@ export class BoardCell {
     clone.canSpawn = this.canSpawn;
     clone.inRangeOfRecycler = this.inRangeOfRecycler;
     clone.adjacent = this.adjacent;
+    clone.surround = this.surround;
     clone.prev = this.prev;
+    clone.updateAnalytics();
     return clone;
   }
 
@@ -123,71 +125,69 @@ export class BoardCell {
   }
 
   isNeutral() {
-    return this.owner === -1 && this.scrapAmount > 0;
+    return this.owner === -1;
   }
 
   isGrass() {
     return this.scrapAmount === 0;
   }
 
+  isUncaptured() {
+    return this.isNeutral() && !this.isGrass();
+  }
+
   isGrassNextTurn() {
     return this.scrapAmount === 1 && this.inRangeOfRecycler;
   }
 
-  isMoveable() {
+  isAbleMoveHere() {
     return !(this.recycler || this.isGrass() || this.isGrassNextTurn());
   }
 
-  isInnerline() {
-    return this.isMine() && Boolean(this.adjacent.find((_) => !_.isMine()));
-  }
-
-  isOuterline() {
-    return !this.isMine() && Boolean(this.adjacent.find((_) => _.isMine()));
-  }
-
-  isFrontline() {
-    return this.isMine() && Boolean(this.adjacent.find((_) => !_.isFoe()));
-  }
-
-  isRecycledByMe() {
+  isMyRecyclerInRange() {
     return !!this.adjacent.find((_) => _.recycler && _.isMine());
   }
 
-  isRecycledByOpponent() {
+  isEnemyRecyclerInRange() {
     return !!this.adjacent.find((_) => _.recycler && _.isFoe());
   }
 
-  getScrapToMine() {
-    if (!this.canBuild) return 0;
+  getAdjacentEnemies() {
+    return this.adjacent.reduce((sum, _) => sum + (_.isFoe() ? _.units : 0), 0);
+  }
 
+  isInDanger() {
+    return this.isMine() && this.canMoveHere && this.adjacentEnemies > 0;
+  }
+
+  getScrapToRecycle() {
+    if (!this.canBuild) return 0;
+    const recycleTurns = this.scrapAmount - Number(this.inRangeOfRecycler);
     return this.adjacent
+      .slice()
+      .concat(this)
       .map((_) => {
-        if (_.recycledByMe) return 0;
-        if (_.recycledByOpponent) return _.scrapAmount / 2;
+        if (_.inRangeOfMyRecycler) return 0;
+        if (_.inRangeOfEnemyRecycler) return _.scrapAmount - 1;
         return _.scrapAmount;
       })
-      .map((scrap) => Math.min(scrap, this.scrapAmount))
-      .reduce((sum, scrap) => sum + scrap, this.scrapAmount);
+      .reduce((sum, scrap) => sum + Math.min(scrap, recycleTurns), 0);
   }
 
-  getAdjacentEnemies() {
-    return this.adjacent
-      .map((_) => (_.isFoe() ? _.units : 0))
-      .reduce((sum, units) => sum + units, 0);
-  }
-
-  hasEmptyEnemyAdjacent() {
-    return !!this.adjacent.find(
-      (_) => _.isFoe() && _.units === 0 && _.moveable
+  getTilesToRecycle() {
+    return (
+      1 +
+      this.adjacent
+        .filter((_) => _.scrapAmount > 0)
+        .filter((_) => _.scrapAmount <= this.scrapAmount).length
     );
   }
 
   getExpansionScore(): number {
-    if (!this.moveable) return 0;
+    if (!this.canMoveHere) return 0;
     if (this.isMine()) return -this.units;
     if (this.isFoe()) return this.units ? -this.units : 3;
-    if (this.isNeutral()) return 5;
+    if (this.isUncaptured()) return 5;
     return 0;
   }
 }
