@@ -64,19 +64,19 @@ export class Engine {
     const { cells, outerBorder } = board;
 
     const tilesToCapture = outerBorder.filter((_) => _.canMoveHere);
-    console.error(
-      'tilesToCapture',
-      tilesToCapture.map((_) => _.key)
-    );
 
     if (this.state.myMatter >= 10 && tilesToCapture.length > 0) {
       const recyclersToBuild = cells
-        .filter((_) => _.canBuild && !_.inRangeOfRecycler)
-        .filter((_) => _.scrapToRecycle > 25 && _.tilesToRecycle < 5)
+        .filter((_) => _.canBuild)
+        .filter(
+          (_) =>
+            (_.scrapToRecycle > 30 && _.tilesToRecycle < 5) ||
+            (_.scrapToRecycle > 25 && _.tilesToRecycle < 4)
+        )
         .sort(
           (a, b) =>
-            b.scrapToRecycle - a.scrapToRecycle ||
             a.tilesToRecycle - b.tilesToRecycle ||
+            b.scrapToRecycle - a.scrapToRecycle ||
             a.distanceToOpponentSpawn - b.distanceToOpponentSpawn
         );
 
@@ -107,44 +107,6 @@ export class Engine {
       DEBUG_DEFENSIVE_SPAWN,
       DEBUG_OFFENSIVE_SPAWN,
     } = this.config;
-
-    const uncaptured = outerBorder.filter((_) => _.isUncaptured());
-
-    /* Expansion spawn */
-    const canSpawn = this.state.myMatter >= 10;
-    const shouldSpawnExpansion = uncaptured.length > 0;
-    if (canSpawn && shouldSpawnExpansion) {
-      const expansionSpawns = innerBorder
-        .filter((cell) => cell.canSpawn && !cell.isGrassNextTurn())
-        .filter((cell) => cell.adjacent.find((_) => _.isUncaptured()))
-        .map((cell) => ({
-          cell,
-          expansionScore: cell.surround.reduce(
-            (score, _) => score + _.getExpansionScore(),
-            cell.getExpansionScore()
-          ),
-        }))
-        .sort(
-          (a, b) =>
-            b.expansionScore - a.expansionScore ||
-            a.cell.distanceToCenter - b.cell.distanceToCenter
-        );
-
-      if (expansionSpawns[0]?.cell) {
-        this.spawns.push(expansionSpawns[0]);
-        this.state.myMatter -= 10;
-
-        if (DEBUG_EXPANSION_SPAWN) {
-          console.error(
-            '[SPAWN] Expansion:',
-            expansionSpawns.slice(0, 3).map(({ cell, expansionScore }) => ({
-              key: cell.key,
-              expansionScore,
-            }))
-          );
-        }
-      }
-    }
 
     /* Offensive spawn */
     if (this.state.myMatter >= 10) {
@@ -212,6 +174,47 @@ export class Engine {
         }
       }
     }
+
+    const uncaptured = outerBorder.filter((_) => _.isUncaptured());
+
+    /* Expansion spawn */
+    const canSpawn = this.state.myMatter >= 10;
+    const shouldSpawnExpansion = uncaptured.length > 0;
+    if (canSpawn && shouldSpawnExpansion) {
+      const expansionSpawns = innerBorder
+        .filter((cell) => cell.canSpawn && !cell.isGrassNextTurn())
+        .filter(
+          (cell) =>
+            cell.adjacent.find((_) => _.isUncaptured()) && cell.units === 0
+        )
+        .map((cell) => ({
+          cell,
+          expansionScore: cell.surround.reduce(
+            (score, _) => score + _.getExpansionScore(),
+            cell.getExpansionScore()
+          ),
+        }))
+        .sort(
+          (a, b) =>
+            b.expansionScore - a.expansionScore ||
+            a.cell.distanceToCenter - b.cell.distanceToCenter
+        );
+
+      if (expansionSpawns[0]?.cell) {
+        this.spawns.push(expansionSpawns[0]);
+        this.state.myMatter -= 10;
+
+        if (DEBUG_EXPANSION_SPAWN) {
+          console.error(
+            '[SPAWN] Expansion:',
+            expansionSpawns.slice(0, 3).map(({ cell, expansionScore }) => ({
+              key: cell.key,
+              expansionScore,
+            }))
+          );
+        }
+      }
+    }
   }
 
   commandMove() {
@@ -224,32 +227,39 @@ export class Engine {
       .forEach((cell) => {
         new Array(cell.units).fill(null).forEach((_) => {
           this.robots.push({
-            x: cell.x,
-            y: cell.y,
+            cell,
             target: null,
           });
         });
       });
 
     /* Assign targets */
-    this.robots.forEach((robot) => {
-      const targets = outerBorder
-        .map((cell) => ({
-          cell,
-          distanceToRobot: cell.distanceTo(robot),
-        }))
-        .sort(
-          (a, b) =>
-            a.distanceToRobot - b.distanceToRobot ||
-            a.cell.targeted - b.cell.targeted ||
-            a.cell.distanceToCenter - b.cell.distanceToCenter
-        );
+    this.robots
+      .sort(
+        (a, b) =>
+          a.cell.distanceToOpponentSpawn - b.cell.distanceToOpponentSpawn ||
+          a.cell.distanceToCenter - b.cell.distanceToCenter
+      )
+      .forEach((robot) => {
+        const targets = outerBorder
+          .map((cell) => ({
+            cell,
+            score:
+              cell.distanceTo(robot.cell) * 2 +
+              cell.distanceToOpponentSpawn * 0.5 +
+              cell.targeted,
+          }))
+          .sort(
+            (a, b) =>
+              a.score - b.score ||
+              a.cell.distanceToCenter - b.cell.distanceToCenter
+          );
 
-      if (targets[0]) {
-        robot.target = targets[0].cell;
-        robot.target.targeted++;
-      }
-    });
+        if (targets[0]) {
+          robot.target = targets[0].cell;
+          robot.target.targeted++;
+        }
+      });
   }
 
   printCommand() {
@@ -266,8 +276,8 @@ export class Engine {
     /* Moves */
     this.robots
       .filter((_) => Boolean(_.target))
-      .forEach(({ x, y, target }) =>
-        commands.push(`MOVE 1 ${x} ${y} ${target.x} ${target.y}`)
+      .forEach(({ cell, target }) =>
+        commands.push(`MOVE 1 ${cell.x} ${cell.y} ${target.x} ${target.y}`)
       );
 
     /* Message */
@@ -289,9 +299,8 @@ export class Engine {
 }
 
 interface IRobot {
-  x: number;
-  y: number;
-  target: BoardCell | null;
+  cell: BoardCell;
+  target?: BoardCell;
 }
 
 interface IEngineConfig {
