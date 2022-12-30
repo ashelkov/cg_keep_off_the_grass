@@ -38,7 +38,7 @@ export class Game {
       this.engine.debugger();
 
       // 6. Make a move
-      this.engine.printCommand();
+      this.engine.commandOutput();
     }
   }
 }

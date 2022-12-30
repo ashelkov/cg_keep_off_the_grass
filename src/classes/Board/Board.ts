@@ -6,15 +6,14 @@ export class Board {
   height: number;
   cells: BoardCell[];
   cellsXY: BoardCell[][];
-
-  innerBorder: BoardCell[]; // mine cells adjacent with enemy or neutral cells
-  outerBorder: BoardCell[]; // not mine cells adjacent with mine
+  maxDistanceToSpawn: number;
 
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
     this.cells = [];
     this.cellsXY = [];
+    this.maxDistanceToSpawn = 0;
 
     this.createGrid();
     this.initialize();
@@ -48,20 +47,36 @@ export class Board {
 
     if (turn === 1) {
       this.calcDistanceToSpawns();
+      this.calcDistanceToSpawnScore();
     }
   }
 
   calcDistanceToSpawns() {
     const mySpawnPoint = this.cells.find((_) => _.isMine() && !_.units);
     const oppSpawnPoint = this.cells.find((_) => _.isFoe() && !_.units);
-
-    for (let y = 0; y < this.height; y++) {
-      for (let x = 0; x < this.width; x++) {
-        const cell = this.cellsXY[y][x];
-        cell.distanceToMySpawn = cell.distanceTo(mySpawnPoint);
-        cell.distanceToOpponentSpawn = cell.distanceTo(oppSpawnPoint);
+    this.cells.forEach((cell) => {
+      cell.distanceToMySpawn = cell.distanceTo(mySpawnPoint);
+      cell.distanceToOpponentSpawn = cell.distanceTo(oppSpawnPoint);
+      // area owner
+      const delta = cell.distanceToMySpawn - cell.distanceToOpponentSpawn;
+      cell.areaOwner = delta > 0 ? 0 : delta < 0 ? 1 : -1;
+      // max distance to spawn
+      if (cell.distanceToMySpawn > this.maxDistanceToSpawn) {
+        this.maxDistanceToSpawn = cell.distanceToMySpawn;
       }
-    }
+    });
+  }
+
+  calcDistanceToSpawnScore() {
+    this.cells.forEach((cell) => {
+      cell._distanceToMySpawn =
+        Math.ceil((cell.distanceToMySpawn / this.maxDistanceToSpawn) * 100) /
+        100;
+      cell._distanceToOpponentSpawn =
+        Math.ceil(
+          (cell.distanceToOpponentSpawn / this.maxDistanceToSpawn) * 100
+        ) / 100;
+    });
   }
 
   updateAnalytics() {
@@ -70,27 +85,5 @@ export class Board {
         this.cellsXY[y][x].updateAnalytics();
       }
     }
-    this.innerBorder = this.getInnerBorder();
-    this.outerBorder = this.getOuterBorder();
-  }
-
-  /* Analytical methods */
-
-  getInnerBorder() {
-    return this.cells.filter(
-      (cell) =>
-        cell.isMine() &&
-        cell.canMoveHere &&
-        cell.adjacent.some((_) => !_.isMine() && _.canMoveHere)
-    );
-  }
-
-  getOuterBorder() {
-    return this.cells.filter(
-      (cell) =>
-        !cell.isMine() &&
-        cell.canMoveHere &&
-        cell.adjacent.some((_) => _.isMine() && _.canMoveHere)
-    );
   }
 }
