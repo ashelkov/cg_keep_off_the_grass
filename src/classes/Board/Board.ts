@@ -6,14 +6,12 @@ export class Board {
   height: number;
   cells: BoardCell[];
   cellsXY: BoardCell[][];
-  maxDistanceToSpawn: number;
 
   constructor(width: number, height: number) {
     this.width = width;
     this.height = height;
     this.cells = [];
     this.cellsXY = [];
-    this.maxDistanceToSpawn = 0;
 
     this.createGrid();
     this.initialize();
@@ -47,7 +45,7 @@ export class Board {
 
     if (turn === 1) {
       this.calcDistanceToSpawns();
-      this.calcDistanceToSpawnScore();
+      this.calcDistanceCoef();
     }
   }
 
@@ -60,22 +58,21 @@ export class Board {
       // area owner
       const delta = cell.distanceToMySpawn - cell.distanceToOpponentSpawn;
       cell.areaOwner = delta > 0 ? 0 : delta < 0 ? 1 : -1;
-      // max distance to spawn
-      if (cell.distanceToMySpawn > this.maxDistanceToSpawn) {
-        this.maxDistanceToSpawn = cell.distanceToMySpawn;
-      }
     });
   }
 
-  calcDistanceToSpawnScore() {
+  calcDistanceCoef() {
+    const mySpawnPoint = this.cells.find((_) => _.isMine() && !_.units);
+    const oppSpawnPoint = this.cells.find((_) => _.isFoe() && !_.units);
     this.cells.forEach((cell) => {
-      cell._distanceToMySpawn =
-        Math.ceil((cell.distanceToMySpawn / this.maxDistanceToSpawn) * 100) /
-        100;
-      cell._distanceToOpponentSpawn =
-        Math.ceil(
-          (cell.distanceToOpponentSpawn / this.maxDistanceToSpawn) * 100
-        ) / 100;
+      const oppDistX = Math.abs(cell.x - oppSpawnPoint.x);
+      const oppDistY = Math.abs(cell.y - oppSpawnPoint.y);
+      const myDistX = Math.abs(cell.x - mySpawnPoint.x);
+      const myDistY = Math.abs(cell.y - mySpawnPoint.y);
+      const distanceCoef =
+        (0.75 * (myDistX + (this.width - oppDistX))) / this.width +
+        (0.25 * (myDistY + (this.height - oppDistY))) / this.height;
+      cell.distanceCoef = distanceCoef;
     });
   }
 

@@ -24,16 +24,17 @@ export class BoardCell {
   distanceToCenter: number;
   distanceToMySpawn: number;
   distanceToOpponentSpawn: number;
-  _distanceToMySpawn: number; // 0..1, where 1 - is max distance, 0 - is spawn
-  _distanceToOpponentSpawn: number;
+  distanceCoef: number;
 
   // analyzed
   scrapToRecycle?: number;
   tilesToRecycle?: number;
   canMoveHere?: boolean;
   attacked?: number;
-  targeted?: number;
-  defended?: number;
+  attackedMaxStack?: number;
+  spawnedHere?: number;
+  movedHere?: number;
+  adjacentUncaptured?: number;
   trafficCoef?: number;
 
   constructor(x: number, y: number) {
@@ -46,6 +47,7 @@ export class BoardCell {
     this.recycler = false;
     this.canBuild = false;
     this.canSpawn = false;
+    this.canMoveHere = true;
     this.inRangeOfRecycler = false;
     this.adjacent = [];
     this.surround = [];
@@ -90,9 +92,11 @@ export class BoardCell {
     this.scrapToRecycle = this.getScrapToRecycle();
     this.tilesToRecycle = this.getTilesToRecycle();
     this.canMoveHere = this.isAbleMoveHere();
-    this.attacked = this.getAdjacentEnemies();
-    this.targeted = 0;
-    this.defended = 0;
+    this.attacked = this.getAttackersCount();
+    this.attackedMaxStack = this.getAttackersMaxStack();
+    this.adjacentUncaptured = this.getAdjacentUncaptured();
+    this.spawnedHere = 0;
+    this.movedHere = 0;
     this.trafficCoef = 1;
   }
 
@@ -114,6 +118,14 @@ export class BoardCell {
 
   distanceTo({ x, y }: Partial<BoardCell>) {
     return Math.abs(this.x - x) + Math.abs(this.y - y);
+  }
+
+  distanceToX({ x, y }: Partial<BoardCell>) {
+    return Math.abs(this.x - x);
+  }
+
+  distanceToY({ x, y }: Partial<BoardCell>) {
+    return Math.abs(this.y - y);
   }
 
   /* Basic methods */
@@ -185,8 +197,19 @@ export class BoardCell {
     return this.isMine() && this.canMoveHere && this.attacked > 0;
   }
 
-  getAdjacentEnemies() {
+  getAttackersCount() {
     return this.adjacent.reduce((sum, _) => sum + (_.isFoe() ? _.units : 0), 0);
+  }
+
+  getAttackersMaxStack() {
+    return this.adjacent
+      .filter((_) => _.isFoe() && _.units > 0)
+      .reduce((max, _) => (_.units > max ? _.units : max), 0);
+  }
+
+  getAdjacentUncaptured() {
+    return this.adjacent.filter((_) => _.isUncaptured() && _.isAbleMoveHere())
+      .length;
   }
 
   /* Area methods */
@@ -224,6 +247,14 @@ export class BoardCell {
       !this.isMine() &&
       this.canMoveHere &&
       this.adjacent.some((_) => _.isMine() && _.canMoveHere)
+    );
+  }
+
+  isWarzone() {
+    return (
+      this.isMine() &&
+      this.canMoveHere &&
+      this.adjacent.some((_) => _.isFoe() && _.canMoveHere)
     );
   }
 

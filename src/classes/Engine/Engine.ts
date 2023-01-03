@@ -15,6 +15,7 @@ export class Engine {
 
   innerBorder: BoardCell[];
   outerBorder: BoardCell[];
+  warzones: BoardCell[];
 
   constructor(state: GameState) {
     this.state = state;
@@ -31,6 +32,7 @@ export class Engine {
 
     this.innerBorder = this.state.board.cells.filter((_) => _.isInnerBorder());
     this.outerBorder = this.state.board.cells.filter((_) => _.isOuterBorder());
+    this.warzones = this.state.board.cells.filter((_) => _.isWarzone());
 
     this.updateCounters();
     this.produceActions();
@@ -67,13 +69,13 @@ export class Engine {
     this.buildMiner();
 
     this.spawnDefender();
-    this.spawnExplorer();
-    this.spawnAttacker();
-
     this.spawnDefender();
     this.spawnExplorer();
+    this.spawnExplorer();
+    this.spawnAttacker();
     this.spawnAttacker();
 
+    this.holdPosition();
     this.moveDefault();
   }
 
@@ -84,10 +86,14 @@ export class Engine {
 
     const tilesToBlock = this.innerBorder
       .filter((_) => _.canBuild)
-      .filter((_) => _.attacked > 1)
+      .filter((_) => {
+        if (_.isMidline() || _.isEnemyArea()) return _.attackedMaxStack > 0;
+        return _.attackedMaxStack > 1;
+      })
       .sort(
         (a, b) =>
-          b.attacked - a.attacked || b.distanceToMySpawn - a.distanceToMySpawn
+          a.distanceToMySpawn - b.distanceToMySpawn ||
+          a.distanceToCenter - b.distanceToCenter
       );
 
     if (tilesToBlock[0]) {
@@ -140,22 +146,22 @@ export class Engine {
 
   spawnExplorer() {
     if (this.state.myMatter < 10) return;
-    if (this.innerBorder.length === 0) return;
+    if (this.warzones.length > 0) return;
 
     const explorer = this.innerBorder
       .filter((_) => _.canSpawn)
+      .filter((_) => _.adjacentUncaptured > 0 && !_.spawnedHere)
       .sort(
         (a, b) =>
-          b.distanceToMySpawn - a.distanceToMySpawn ||
-          a.units - b.units ||
-          a.distanceToCenter - b.distanceToCenter
+          b.distanceCoef - a.distanceCoef ||
+          b.distanceToMySpawn - a.distanceToMySpawn
       );
 
     if (explorer[0]) {
       const amount = 1;
       this.spawns.push({ type: 'explorer', cell: explorer[0], amount });
       this.state.myMatter -= 10 * amount;
-      explorer[0].defended += amount;
+      explorer[0].spawnedHere += amount;
       console.error(`[spawn] explorer at ${explorer[0].key}`);
     }
   }
@@ -165,18 +171,19 @@ export class Engine {
 
     const defenders = this.innerBorder
       .filter((_) => _.canSpawn)
-      .filter((_) => _.attacked > _.defended)
+      .filter((_) => _.attackedMaxStack > _.spawnedHere + _.movedHere)
       .sort(
         (a, b) =>
-          a.distanceToMySpawn - b.distanceToMySpawn ||
-          a.distanceToCenter - b.distanceToCenter
+          a.spawnedHere - b.spawnedHere ||
+          b.distanceToMySpawn - a.distanceToMySpawn ||
+          b.distanceToCenter - a.distanceToCenter
       );
 
     if (defenders[0]) {
       const amount = 1;
       this.spawns.push({ type: 'defender', cell: defenders[0], amount });
       this.state.myMatter -= 10 * amount;
-      defenders[0].defended += amount;
+      defenders[0].spawnedHere += amount;
       console.error(`[spawn] defender at ${defenders[0].key}`);
     }
   }
@@ -186,38 +193,87 @@ export class Engine {
 
     const attackers = this.innerBorder
       .filter((_) => _.canSpawn)
-      .filter((_) => _.attacked > 0 && _.units > 0)
       .sort(
         (a, b) =>
-          b.distanceToCenter - a.distanceToMySpawn ||
-          b.distanceToMySpawn - a.distanceToMySpawn
+          +b.isWarzone() - +a.isWarzone() ||
+          a.units - b.units ||
+          a.attacked - b.attacked ||
+          a.distanceToOpponentSpawn - b.distanceToOpponentSpawn ||
+          b.distanceToCenter - a.distanceToMySpawn
       );
 
     if (attackers[0]) {
       const amount = 1;
       this.spawns.push({ type: 'attacker', cell: attackers[0], amount });
       this.state.myMatter -= 10 * amount;
-      attackers[0].defended += amount;
+      attackers[0].spawnedHere += amount;
       console.error(`[Spawn] attacker at ${attackers[0].key}`);
     }
   }
 
-  /* MOVE ACTIONS */
+  /* MOVEMENT ACTIONS */
+
+  holdPosition() {
+    this.robots
+      .filter((_) => !_.target)
+      .filter(({ cell }) => cell.attacked > 0)
+      .forEach((robot) => {
+        const { attacked, spawnedHere, movedHere, key } = robot.cell;
+        const isDefended =
+          movedHere || spawnedHere || robot.cell.isGrassNextTurn();
+        const shouldHold = attacked && !isDefended;
+        if (shouldHold) {
+          robot.objective = 'hold_position';
+          robot.target = robot.cell;
+          robot.cell.movedHere += 1;
+          console.error(`[hold] position at ${key}`);
+        }
+      });
+  }
 
   moveDefault() {
     this.robots
       .filter((_) => !_.target)
       .sort(
         (a, b) =>
-          a.cell.distanceToOpponentSpawn - b.cell.distanceToOpponentSpawn ||
-          a.cell.distanceToCenter - b.cell.distanceToCenter
+          b.cell.distanceToCenter - a.cell.distanceToCenter ||
+          b.cell.distanceToOpponentSpawn - a.cell.distanceToOpponentSpawn
       )
       .forEach((robot) => {
-        this.getRobotPath(robot);
+        const { path, score } = this.getOptimalPath(robot);
+
+        if (score > 0) {
+          robot.path = path;
+          robot.target = robot.path[0];
+          // decrease traffic coef
+          robot.path.forEach((cell, index) => {
+            let decrease = 0;
+            if (cell.isNeutral() || cell.isMine()) {
+              decrease = [0.5, 0.4, 0.3, 0.2, 0.1][index] || 0.1;
+            }
+            if (cell.isFoe() || cell.attacked) {
+              decrease = 0.1;
+            }
+            cell.trafficCoef = Math.max(0, cell.trafficCoef - decrease);
+          });
+        } else {
+          // move to closest outer border
+          const target = this.outerBorder.sort(
+            (a, b) =>
+              +b.isFoe() - +a.isFoe() ||
+              a.distanceTo(robot.cell) - b.distanceTo(robot.cell)
+          )[0];
+          if (target) {
+            robot.target = target;
+            // console.error(
+            //   `[warn] robot ${robot.cell.key} has zero path score, go to ${target.key}`
+            // );
+          }
+        }
       });
   }
 
-  getRobotPath(robot: IRobotAction) {
+  getOptimalPath(robot: IRobotAction) {
     const pathLength = 7;
     const open = [[robot.cell]];
     const closed = [];
@@ -242,46 +298,25 @@ export class Engine {
       }
     }
 
-    const bestScored = closed
+    return closed
       .map((path) => ({ path, score: this.getPathScore(path) }))
       .sort((a, b) => b.score - a.score)[0];
-
-    robot.path = bestScored?.path;
-    robot.target = robot.path[0];
-
-    robot.path.forEach((cell, index) => {
-      cell.trafficCoef *= 0.5;
-    });
   }
 
   getPathScore(path: BoardCell[]) {
     return path.reduce((score, cell, index) => {
+      const { distanceCoef, trafficCoef } = cell;
       const tileScore = this.getBasicTileScore(cell);
-      const speedCoef = [2, 1.5, 1][index] || 0.5;
-      const distanceCoef =
-        (cell._distanceToMySpawn + (1 - cell._distanceToOpponentSpawn)) / 2;
-      const trafficCoef = cell.trafficCoef;
-      const cellScore = tileScore * distanceCoef * speedCoef * trafficCoef;
+      const speedCoef = [1, 0.9, 0.8, 0.7, 0.6][index] || 0.5;
+      const cellScore = tileScore * distanceCoef * trafficCoef * speedCoef;
       return score + cellScore;
     }, 0);
   }
 
   getBasicTileScore(cell: BoardCell) {
     if (cell.isMine()) return 0;
-    if (cell.isNeutral()) {
-      if (cell.isMidline()) return 3;
-      if (cell.isMyFrontier()) return 2;
-      if (cell.isEnemyArea()) return 2;
-      if (cell.isMyArea()) return 1;
-      return 1;
-    }
-    if (cell.isFoe()) {
-      if (cell.isMidline()) return 2;
-      if (cell.isMyFrontier()) return 3;
-      if (cell.isMyArea()) return 2;
-      if (cell.isEnemyArea()) return 1;
-      return 1;
-    }
+    if (cell.isNeutral()) return 2;
+    if (cell.isFoe()) return 1;
   }
 
   /* COMMAND OUTPUT */
@@ -320,32 +355,33 @@ export class Engine {
 
   debugger() {
     const { turn, turnTimestamp, board } = this.state;
-    const inspected = ['x-y', 'x-y'];
+    const inspected = ['x-y', 'x-y', 'x-y'];
 
     console.error(`turn ${turn}, ${Date.now() - turnTimestamp}ms`);
+    console.error(`warzones count: ${this.warzones.length}`);
 
     // inspect cell values
     board.cells
       .filter((_) => inspected.includes(_.key))
-      .forEach(
-        ({ key, areaOwner, _distanceToMySpawn, _distanceToOpponentSpawn }) => {
-          console.error({
-            key,
-            areaOwner,
-            _distToMe: _distanceToMySpawn,
-            _distToOpp: _distanceToOpponentSpawn,
-          });
-        }
-      );
+      .forEach((_) => {
+        const basicScore = this.getBasicTileScore(_);
+        console.error({
+          key: _.key,
+          basicScore,
+          distanceCoef: _.distanceCoef,
+          trafficCoef: _.trafficCoef,
+          score: this.getBasicTileScore(_) * _.distanceCoef * _.trafficCoef,
+        });
+      });
 
     // inspect robot path
-    this.robots
-      .filter((_) => _.path)
-      .slice(0, 4)
-      .forEach((robot, index) => {
-        const path = robot.path.map((_) => _.key).join(', ');
-        console.error(`robot ${robot.cell.key}: `, path);
-      });
+    // this.robots
+    //   .filter((_) => _.path)
+    //   .slice(0, 4)
+    //   .forEach((robot, index) => {
+    //     const path = robot.path.map((_) => _.key).join(', ');
+    //     console.error(`robot ${robot.cell.key}: `, path);
+    //   });
   }
 
   /* Helper functions */
